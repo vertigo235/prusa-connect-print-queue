@@ -12,6 +12,7 @@ require:
   core-device.get: "*"
   core-device.print: "*"
   core-device.jobs: "*"
+  core-device.files: "*"
   core-bus.subscribe: "*"
   core-access.check: "*"
   core-storage.stat: "*"

@@ -115,7 +115,7 @@ export interface paths {
         put?: never;
         /**
          * Add a print to a queue
-         * @description Adds an existing core-storage file to the end of a printer queue. The caller must be allowed to operate the printer and read the file.
+         * @description Adds an existing core-storage file or printer-resident file to the end of a printer queue. The caller must be allowed to operate the printer and read the source.
          */
         post: operations["enqueuePrint"];
         delete?: never;
@@ -177,15 +177,17 @@ export interface components {
             device: components["schemas"]["Printer"];
             items: components["schemas"]["QueueItem"][];
         };
-        /** @description A file already held in a core storage. */
+        /** @description A file already held in core storage, or a file already held on the printer. */
         EnqueueRequest: {
-            /** @description Core storage name. */
-            storage: string;
-            /** @description Path inside the core storage. */
-            source: string;
-            /** @description Printer path; defaults to the source basename. */
+            /** @description Core storage name; use with source. */
+            storage?: string;
+            /** @description Path inside core storage; use with storage. */
+            source?: string;
+            /** @description Storage-prefixed printer path; use instead of storage and source. */
+            printer_path?: string;
+            /** @description Printer path; defaults to the source basename or printer_path. */
             destination?: string;
-            /** @description Name shown in the queue; defaults to the source basename. */
+            /** @description Name shown in the queue; defaults to the source basename or printer_path basename. */
             display_name?: string;
         };
         /** @description The zero-based pending queue position to move an item to. */

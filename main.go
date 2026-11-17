@@ -269,6 +269,7 @@ func nonNilItems(items []queueItem) []queueItem {
 type enqueueRequest struct {
 	Storage     string `json:"storage"`
 	Source      string `json:"source"`
+	PrinterPath string `json:"printer_path"`
 	Destination string `json:"destination"`
 	DisplayName string `json:"display_name"`
 }
@@ -284,23 +285,40 @@ func (m *module) enqueue(w http.ResponseWriter, r *http.Request, store *queueSto
 		writeError(w, http.StatusBadRequest, "INVALID_BODY", err.Error())
 		return
 	}
-	if input.Storage == "" || input.Source == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_FILE", "storage and source are required")
-		return
-	}
-	if len(input.Storage) > storageapi.MaxStorageBytes || len(input.Source) > storageapi.MaxPathBytes {
-		writeError(w, http.StatusBadRequest, "INVALID_FILE", "storage or source exceeds the core limit")
-		return
-	}
-	if err := validateRelativePath(input.Source, storageapi.MaxPathBytes); err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_FILE", err.Error())
-		return
+	if input.PrinterPath != "" {
+		if input.Storage != "" || input.Source != "" {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", "use either printer_path or storage and source")
+			return
+		}
+		if err := validateRelativePath(input.PrinterPath, deviceapi.MaxPathBytes); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", err.Error())
+			return
+		}
+	} else {
+		if input.Storage == "" || input.Source == "" {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", "storage and source are required")
+			return
+		}
+		if len(input.Storage) > storageapi.MaxStorageBytes || len(input.Source) > storageapi.MaxPathBytes {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", "storage or source exceeds the core limit")
+			return
+		}
+		if err := validateRelativePath(input.Source, storageapi.MaxPathBytes); err != nil {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", err.Error())
+			return
+		}
 	}
 	if input.Destination == "" {
-		input.Destination = path.Base(input.Source)
+		input.Destination = input.PrinterPath
+		if input.Destination == "" {
+			input.Destination = path.Base(input.Source)
+		}
 	}
 	if input.DisplayName == "" {
-		input.DisplayName = path.Base(input.Source)
+		input.DisplayName = path.Base(input.PrinterPath)
+		if input.DisplayName == "." || input.DisplayName == "" {
+			input.DisplayName = path.Base(input.Source)
+		}
 	}
 	if err := validateRelativePath(input.Destination, deviceapi.MaxPathBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_DESTINATION", err.Error())
@@ -310,23 +328,39 @@ func (m *module) enqueue(w http.ResponseWriter, r *http.Request, store *queueSto
 		writeMappedError(w, err)
 		return
 	}
-	file, err := m.files.Stat(r.Context(), storageapi.StatParams{Principal: principal, Storage: input.Storage, Path: input.Source})
-	if err != nil {
-		writeMappedError(w, err)
-		return
+	var sourceSize, sourceMTime int64
+	var sourceSHA256 string
+	if input.PrinterPath != "" {
+		file, statErr := m.printerFile(r.Context(), deviceID, input.PrinterPath)
+		if statErr != nil {
+			writeMappedError(w, statErr)
+			return
+		}
+		sourceSize, sourceMTime = file.Size, file.Modified
+	} else {
+		file, statErr := m.files.Stat(r.Context(), storageapi.StatParams{Principal: principal, Storage: input.Storage, Path: input.Source})
+		if statErr != nil {
+			writeMappedError(w, statErr)
+			return
+		}
+		if file.IsDir || file.Irregular {
+			writeError(w, http.StatusBadRequest, "INVALID_FILE", "source must name a regular file")
+			return
+		}
+		digest, digestErr := m.sourceDigest(r.Context(), principal, input.Storage, input.Source, file)
+		if digestErr != nil {
+			writeMappedError(w, digestErr)
+			return
+		}
+		sourceSize, sourceMTime, sourceSHA256 = file.Size, file.MTime, digest
 	}
-	if file.IsDir || file.Irregular {
-		writeError(w, http.StatusBadRequest, "INVALID_FILE", "source must name a regular file")
-		return
-	}
-	digest, err := m.sourceDigest(r.Context(), principal, input.Storage, input.Source, file)
-	if err != nil {
-		writeMappedError(w, err)
-		return
+	source := input.Source
+	if input.PrinterPath != "" {
+		source = input.PrinterPath
 	}
 	item, err := store.enqueue(r.Context(), newQueueItem{
-		DeviceID: deviceID, Storage: input.Storage, Source: input.Source,
-		SourceSize: file.Size, SourceMTime: file.MTime, SourceSHA256: digest,
+		DeviceID: deviceID, Storage: input.Storage, Source: source,
+		SourceSize: sourceSize, SourceMTime: sourceMTime, SourceSHA256: sourceSHA256,
 		Destination: input.Destination, DisplayName: input.DisplayName, SubmittedBy: principal,
 	})
 	if err != nil {
@@ -627,6 +661,17 @@ func (m *module) handleEvent(ctx context.Context, store *queueStore, raw json.Ra
 	return nil
 }
 
+func (m *module) printerFile(ctx context.Context, deviceID, printerPath string) (deviceapi.File, error) {
+	listing, err := m.fleet.Files(ctx, deviceapi.FilesParams{ID: deviceID, Path: printerPath})
+	if err != nil {
+		return deviceapi.File{}, err
+	}
+	if listing.Entry == nil || listing.Entry.Folder {
+		return deviceapi.File{}, fmt.Errorf("printer file %q is not a regular file", printerPath)
+	}
+	return *listing.Entry, nil
+}
+
 func (m *module) sourceDigest(ctx context.Context, principal, storage, source string, info storageapi.FileInfo) (string, error) {
 	if info.SHA256 != "" {
 		return info.SHA256, nil
@@ -699,27 +744,39 @@ func (m *module) dispatchOnce(ctx context.Context, store *queueStore) {
 			_ = store.setState(ctx, item.ID, stateFailed, "submitter no longer has printer operate permission")
 			continue
 		}
-		file, err := m.files.Stat(ctx, storageapi.StatParams{Storage: item.Storage, Path: item.Source})
-		if err != nil {
-			_ = store.setState(ctx, item.ID, stateFailed, "source file is no longer available: "+err.Error())
-			continue
+		printParams := deviceapi.PrintParams{ID: device.ID, Path: item.Destination}
+		if item.Storage != "" {
+			file, statErr := m.files.Stat(ctx, storageapi.StatParams{Storage: item.Storage, Path: item.Source})
+			if statErr != nil {
+				_ = store.setState(ctx, item.ID, stateFailed, "source file is no longer available: "+statErr.Error())
+				continue
+			}
+			if file.IsDir || file.Irregular || file.Size != item.SourceSize || file.MTime != item.SourceMTime {
+				_ = store.setState(ctx, item.ID, stateFailed, "source file changed since it was queued")
+				continue
+			}
+			digest, digestErr := m.sourceDigest(ctx, "", item.Storage, item.Source, file)
+			if digestErr != nil {
+				_ = store.setState(ctx, item.ID, stateFailed, "source file could not be verified: "+digestErr.Error())
+				continue
+			}
+			if item.SourceSHA256 != "" && digest != item.SourceSHA256 {
+				_ = store.setState(ctx, item.ID, stateFailed, "source file changed since it was queued")
+				continue
+			}
+			printParams.Storage, printParams.Source = item.Storage, item.Source
+		} else {
+			file, statErr := m.printerFile(ctx, device.ID, item.Source)
+			if statErr != nil {
+				_ = store.setState(ctx, item.ID, stateFailed, "printer file is no longer available: "+statErr.Error())
+				continue
+			}
+			if file.Size != item.SourceSize || file.Modified != item.SourceMTime {
+				_ = store.setState(ctx, item.ID, stateFailed, "printer file changed since it was queued")
+				continue
+			}
 		}
-		if file.IsDir || file.Irregular || file.Size != item.SourceSize || file.MTime != item.SourceMTime {
-			_ = store.setState(ctx, item.ID, stateFailed, "source file changed since it was queued")
-			continue
-		}
-		digest, err := m.sourceDigest(ctx, "", item.Storage, item.Source, file)
-		if err != nil {
-			_ = store.setState(ctx, item.ID, stateFailed, "source file could not be verified: "+err.Error())
-			continue
-		}
-		if item.SourceSHA256 != "" && digest != item.SourceSHA256 {
-			_ = store.setState(ctx, item.ID, stateFailed, "source file changed since it was queued")
-			continue
-		}
-		started, err := m.fleet.Print(ctx, deviceapi.PrintParams{
-			ID: device.ID, Storage: item.Storage, Source: item.Source, Path: item.Destination,
-		})
+		started, err := m.fleet.Print(ctx, printParams)
 		if err != nil {
 			switch {
 			case errors.Is(err, deviceapi.ErrNotReady), errors.Is(err, deviceapi.ErrBusy):

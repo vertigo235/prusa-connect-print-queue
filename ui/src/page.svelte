@@ -14,7 +14,7 @@
 
   import { heldHost } from './host';
   import { heldQueue } from './queue.svelte';
-  import type { Queue, QueueItem } from './queue';
+  import type { EnqueueRequest, Queue, QueueItem } from './queue';
 
   const host = heldHost();
   const t = host.t;
@@ -25,6 +25,7 @@
 
   let storage = $state<Record<string, string>>({});
   let source = $state<Record<string, string>>({});
+  let printerPath = $state<Record<string, string>>({});
   let destination = $state<Record<string, string>>({});
 
   const stateOf = (one: Queue): string => {
@@ -44,6 +45,11 @@
   const activeOf = (one: Queue): QueueItem | undefined =>
     one.items.find((item) => item.state === 'starting' || item.state === 'printing');
 
+  const terminalOf = (one: Queue): readonly QueueItem[] =>
+    one.items.filter(
+      (item) => item.state === 'done' || item.state === 'failed' || item.state === 'cancelled',
+    );
+
   const set = (values: Record<string, string>, id: string, value: string): void => {
     values[id] = value;
   };
@@ -52,19 +58,19 @@
     event.preventDefault();
     const sourcePath = source[deviceId]?.trim() ?? '';
     const storageName = storage[deviceId]?.trim() ?? '';
-    if (!sourcePath || !storageName) return;
+    const printerFile = printerPath[deviceId]?.trim() ?? '';
+    if ((!sourcePath || !storageName) && !printerFile) return;
 
-    const request = { storage: storageName, source: sourcePath } as {
-      storage: string;
-      source: string;
-      destination?: string;
-    };
+    const request: EnqueueRequest = printerFile
+      ? { printer_path: printerFile }
+      : { storage: storageName, source: sourcePath };
     const destinationPath = destination[deviceId]?.trim();
     if (destinationPath) request.destination = destinationPath;
     const added = await queue.enqueue(deviceId, request);
     if (added) {
       storage[deviceId] = '';
       source[deviceId] = '';
+      printerPath[deviceId] = '';
       destination[deviceId] = '';
     }
   };
@@ -85,9 +91,17 @@
     if (!fileRef) return;
     const file = parseFileRef(fileRef);
     if (!file) return;
+    const printerSeparator = file.storage === 'printer' ? file.path.indexOf(':') : -1;
+    const printerDevice = printerSeparator < 0 ? '' : file.path.slice(0, printerSeparator);
+    const printerSource = printerSeparator < 0 ? '' : file.path.slice(printerSeparator + 1);
     for (const one of visibleQueues) {
-      storage[one.device.id] = file.storage;
-      source[one.device.id] = file.path;
+      if (printerDevice && one.device.id !== printerDevice) continue;
+      if (printerSource) {
+        printerPath[one.device.id] = printerSource;
+      } else {
+        storage[one.device.id] = file.storage;
+        source[one.device.id] = file.path;
+      }
     }
   };
 
@@ -191,27 +205,54 @@
             </ol>
           {/if}
 
+          {@const history = terminalOf(one)}
+          {#if history.length > 0}
+            <section class="flex flex-col gap-2 border-t border-border pt-3">
+              <h3 class="text-sm font-medium">{t('print-queue.page.history')}</h3>
+              <ul class="flex flex-col gap-1 text-sm">
+                {#each history as item (item.id)}
+                  <li class="flex flex-wrap items-center gap-2">
+                    <span class="font-medium">{item.display_name}</span>
+                    <Badge variant={item.state === 'failed' ? 'destructive' : 'secondary'}>{item.state}</Badge>
+                    {#if item.error}<span class="text-muted-foreground">{item.error}</span>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </section>
+          {/if}
+
           <form class="grid gap-3 @md:grid-cols-2" onsubmit={(event) => void add(event, one.device.id)}>
-            <div class="flex flex-col gap-1">
-              <Label for={`${uid}-${one.device.id}-storage`}>{t('print-queue.page.storage')}</Label>
-              <Input
-                id={`${uid}-${one.device.id}-storage`}
-                value={storage[one.device.id] ?? ''}
-                oninput={(event: Typed) => set(storage, one.device.id, event.currentTarget.value)}
-                placeholder={t('print-queue.page.storagePlaceholder')}
-                required
-              />
-            </div>
-            <div class="flex flex-col gap-1">
-              <Label for={`${uid}-${one.device.id}-source`}>{t('print-queue.page.source')}</Label>
-              <Input
-                id={`${uid}-${one.device.id}-source`}
-                value={source[one.device.id] ?? ''}
-                oninput={(event: Typed) => set(source, one.device.id, event.currentTarget.value)}
-                placeholder={t('print-queue.page.sourcePlaceholder')}
-                required
-              />
-            </div>
+            {#if printerPath[one.device.id]}
+              <div class="flex flex-col gap-1 @md:col-span-2">
+                <Label for={`${uid}-${one.device.id}-printer-file`}>{t('print-queue.page.printerFile')}</Label>
+                <Input
+                  id={`${uid}-${one.device.id}-printer-file`}
+                  value={printerPath[one.device.id]}
+                  readonly
+                />
+              </div>
+            {:else}
+              <div class="flex flex-col gap-1">
+                <Label for={`${uid}-${one.device.id}-storage`}>{t('print-queue.page.storage')}</Label>
+                <Input
+                  id={`${uid}-${one.device.id}-storage`}
+                  value={storage[one.device.id] ?? ''}
+                  oninput={(event: Typed) => set(storage, one.device.id, event.currentTarget.value)}
+                  placeholder={t('print-queue.page.storagePlaceholder')}
+                  required
+                />
+              </div>
+              <div class="flex flex-col gap-1">
+                <Label for={`${uid}-${one.device.id}-source`}>{t('print-queue.page.source')}</Label>
+                <Input
+                  id={`${uid}-${one.device.id}-source`}
+                  value={source[one.device.id] ?? ''}
+                  oninput={(event: Typed) => set(source, one.device.id, event.currentTarget.value)}
+                  placeholder={t('print-queue.page.sourcePlaceholder')}
+                  required
+                />
+              </div>
+            {/if}
             <div class="flex flex-col gap-1">
               <Label for={`${uid}-${one.device.id}-destination`}>{t('print-queue.page.destination')}</Label>
               <Input
@@ -222,7 +263,10 @@
               />
             </div>
             <div class="flex items-end">
-              <Button type="submit" disabled={queue.busy || !storage[one.device.id]?.trim() || !source[one.device.id]?.trim()}>
+              <Button
+                type="submit"
+                disabled={queue.busy || (!printerPath[one.device.id]?.trim() && (!storage[one.device.id]?.trim() || !source[one.device.id]?.trim()))}
+              >
                 {t('print-queue.page.add')}
               </Button>
             </div>
