@@ -1,5 +1,6 @@
 bin/
 dist/
+release/
 node_modules/
 coverage/
 artifacts/

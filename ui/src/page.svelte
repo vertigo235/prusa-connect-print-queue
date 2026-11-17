@@ -20,6 +20,7 @@
   const t = host.t;
   const queue = heldQueue();
   const uid = $props.id();
+  let { deviceId }: { deviceId?: string } = $props();
   type Typed = Event & { currentTarget: HTMLInputElement };
 
   let storage = $state<Record<string, string>>({});
@@ -30,6 +31,12 @@
     const raw = one.device.state?.['/state'];
     return typeof raw === 'string' ? raw : 'UNKNOWN';
   };
+
+  const visibleQueues = $derived(
+    deviceId
+      ? queue.queues.filter((one) => one.device.id === deviceId)
+      : queue.queues,
+  );
 
   const pendingOf = (one: Queue): readonly QueueItem[] =>
     one.items.filter((item) => item.state === 'queued');
@@ -78,7 +85,7 @@
     if (!fileRef) return;
     const file = parseFileRef(fileRef);
     if (!file) return;
-    for (const one of queue.queues) {
+    for (const one of visibleQueues) {
       storage[one.device.id] = file.storage;
       source[one.device.id] = file.path;
     }
@@ -114,12 +121,12 @@
     <Card>
       <CardContent><p class="text-muted-foreground">{t('print-queue.page.reading')}</p></CardContent>
     </Card>
-  {:else if queue.queues.length === 0}
+  {:else if visibleQueues.length === 0}
     <Card>
       <CardContent><p class="text-muted-foreground">{t('print-queue.page.empty')}</p></CardContent>
     </Card>
   {:else}
-    {#each queue.queues as one (one.device.id)}
+    {#each visibleQueues as one (one.device.id)}
       {@const pending = pendingOf(one)}
       {@const active = activeOf(one)}
       <Card>

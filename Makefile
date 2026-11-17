@@ -29,8 +29,9 @@ release: ui-check
 	done
 	chmod -R a+rX dist
 	sh scripts/write-checksums.sh dist
-	rm -f dist/$(NAME)_$(VERSION).tar.gz
-	(cd dist && tar -czf $(NAME)_$(VERSION).tar.gz module.yaml checksums.txt $$(find . -maxdepth 1 -type f ! -name module.yaml ! -name checksums.txt ! -name '$(NAME)_$(VERSION).tar.gz' -printf '%f\n' | LC_ALL=C sort) ui)
+	rm -rf release
+	mkdir -p release
+	tar -czf release/$(NAME)_$(VERSION).tar.gz -C dist module.yaml checksums.txt $$(find dist -maxdepth 1 -type f ! -name module.yaml ! -name checksums.txt -printf '%f\n' | LC_ALL=C sort) ui
 
 clean:
-	rm -rf bin dist client/dist ui/dist
+	rm -rf bin dist release client/dist ui/dist

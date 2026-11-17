@@ -31,6 +31,7 @@ export default defineModule((host) => {
   // this module. The generator wrote both from one answer, so they agree; keep
   // them in step by hand after that.
   host.register.page('print-queue', Page);
+  host.register.deviceTab('queue', Page);
   host.register.fileAction('enqueue', (fileRef) => {
     const href = `${host.pageHref('print-queue')}?file=${encodeURIComponent(fileRef)}`;
     window.history.pushState(null, '', href);

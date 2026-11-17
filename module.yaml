@@ -37,6 +37,10 @@ ui:
       - path: print-queue
         title: Print Queue
         icon: printer
+        hidden: true
+    device_tab:
+      - id: queue
+        title: Queue
     file_action:
       - id: enqueue
         title: Add to queue
