@@ -43,8 +43,8 @@ curl -b cookies.txt -X POST http://localhost:8090/api/v1/grants/device/<device-i
 
 After installing, refresh the web app and open **Printers → a printer →
 Queue**. The queue is a tab on that printer's page; it is no longer intended
-as a fleet-wide Extensions screen. From a storage file's menu, **Add to queue**
-opens the queue form with that file prefilled.
+as a fleet-wide Extensions screen. From a storage file, the **Add to queue** button/menu opens the queue form
+with that file prefilled.
 
 The module requests `observe`, `operate`, and `read_storage`, and checks the
 submitting principal's `operate` permission before enqueue, move, or delete.

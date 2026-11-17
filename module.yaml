@@ -46,4 +46,5 @@ ui:
         title: Add to queue
         icon: printer
         destructive: false
+        primary: true
         file_types: [.gcode, .bgcode, .gco, .g]
