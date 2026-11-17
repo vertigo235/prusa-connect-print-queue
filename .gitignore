@@ -2,6 +2,7 @@ bin/
 dist/
 node_modules/
 coverage/
+artifacts/
 *.log
 *.db
 *.db-shm
