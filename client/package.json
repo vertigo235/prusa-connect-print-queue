@@ -1,0 +1,33 @@
+{
+  "name": "print-queue-client",
+  "version": "0.1.0",
+  "description": "A typed client for the routes of module com.github.aux.vertigo235.prusa-connect-print-queue, generated from its OpenAPI fragment. It binds onto a @prusa/connect client.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "generate:types": "openapi-typescript openapi.json -o src/generated/module-api.ts"
+  },
+  "peerDependencies": {
+    "@prusa/connect": "0.1.0"
+  },
+  "devDependencies": {
+    "@prusa/connect": "file:../../prusa-connect/packages/typescript",
+    "openapi-typescript": "7.13.0",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

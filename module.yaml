@@ -1,11 +1,22 @@
 name: print-queue
-title: Print queue
-summary: Adds a durable, per-printer print queue to Prusa Connect Local.
+title: Print Queue
+summary: Adds an ordered, durable print queue to each Prusa Connect printer.
 codeowner: vertigo235
 kind: sink
-version: 0.1.0
+version: 0.2.0
 license: MIT
 contract_major: 1
+require:
+  core: ">=0.0.1-alpha.7"
+  core-device.list: "*"
+  core-device.get: "*"
+  core-device.print: "*"
+  core-device.jobs: "*"
+  core-bus.subscribe: "*"
+  core-access.check: "*"
+  core-storage.stat: "*"
+needs:
+  database: true
 openapi: openapi.json
 platforms:
   - linux_amd64
@@ -13,3 +24,22 @@ platforms:
   - darwin_amd64
   - darwin_arm64
   - windows_amd64
+permissions:
+  - observe
+  - operate
+  - read_storage
+check_absent_people: true
+ui:
+  entry: ui/index.js
+  library: ">=0.1.0 <1.0.0"
+  contributes:
+    pages:
+      - path: print-queue
+        title: Print Queue
+        icon: printer
+    file_action:
+      - id: enqueue
+        title: Add to queue
+        icon: printer
+        destructive: false
+        file_types: [.gcode, .bgcode, .gco, .g]

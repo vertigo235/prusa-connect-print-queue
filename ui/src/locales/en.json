@@ -1,0 +1,24 @@
+{
+  "_meta.language": "English",
+  "_meta.note": "The print queue page text.",
+
+  "print-queue.page.title": "Print Queue",
+  "print-queue.page.refresh": "Refresh",
+  "print-queue.page.reading": "Reading printer queues…",
+  "print-queue.page.empty": "No visible printers.",
+  "print-queue.page.connected": "Connected",
+  "print-queue.page.offline": "Offline",
+  "print-queue.page.state": "Printer state: {state}",
+  "print-queue.page.active": "Active",
+  "print-queue.page.noPending": "No pending prints.",
+  "print-queue.page.up": "Up",
+  "print-queue.page.down": "Down",
+  "print-queue.page.delete": "Delete",
+  "print-queue.page.storage": "Storage",
+  "print-queue.page.storagePlaceholder": "local",
+  "print-queue.page.source": "Existing G-code path",
+  "print-queue.page.sourcePlaceholder": "prints/example.gcode",
+  "print-queue.page.destination": "Printer filename (optional)",
+  "print-queue.page.destinationPlaceholder": "example.gcode",
+  "print-queue.page.add": "Add to queue"
+}

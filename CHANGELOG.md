@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0 - 2026-11-17
+
+- Add a durable per-printer queue backed by the module database.
+- Add authenticated queue inspection, enqueue, reorder, and pending-item deletion.
+- Dispatch only connected printers explicitly reporting `READY`.
+- Reconcile transfer, command, and job events without retrying ambiguous prints.
+- Add the Print Queue UI and repeatable multi-platform release packaging.
+
 ## 0.1.0 - 2026-11-17
 
 - Start the print queue module with a service health endpoint.

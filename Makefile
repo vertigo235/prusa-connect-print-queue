@@ -1,12 +1,34 @@
-.PHONY: build test check clean
+.PHONY: build test check client-check ui-check ui-build release clean
+
+NAME := print-queue
+VERSION := 0.2.0
+PLATFORMS := linux_amd64 linux_arm64 darwin_amd64 darwin_arm64 windows_amd64
 
 build:
-	go build -trimpath -o bin/print-queue .
+	go build -trimpath -o bin/$(NAME) .
 
 test:
 	go test ./...
 
-check: test build
+client-check:
+	cd client && pnpm install --frozen-lockfile && pnpm run build
+
+ui-check: client-check
+	cd ui && pnpm install --frozen-lockfile && pnpm run check:svelte && pnpm run build
+
+check: test client-check ui-check build
+
+release: ui-check
+	rm -rf dist
+	mkdir -p dist
+	cp -R ui/dist/. dist/
+	for platform in $(PLATFORMS); do \
+		GOOS=$${platform%_*}; GOARCH=$${platform#*_}; \
+		ext=; if [ "$$GOOS" = windows ]; then ext=.exe; fi; \
+		GOOS=$$GOOS GOARCH=$$GOARCH CGO_ENABLED=0 go build -trimpath -o "dist/$(NAME)_$${platform}$$ext" .; \
+	done
+	chmod -R a+rX dist
+	sh scripts/write-checksums.sh dist
 
 clean:
-	rm -rf bin
+	rm -rf bin dist client/dist ui/dist

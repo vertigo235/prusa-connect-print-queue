@@ -1,0 +1,21 @@
+/* The module's own Tailwind, four statements, and only the third emits anything.
+   The host's `@source` lines scan the host and the
+   library's dist, and this module is absent from that build, so a utility only
+   this module names would reach the browser as a class with no rule behind it.
+
+     1. Tailwind's own theme, in scope but not emitted. Without it the build
+        stops on `--spacing`
+     2. the library's theme, its own utilities and its `dark` variant, also not
+        emitted. The variables resolve from the host page's `:root`
+     3. the utilities this module names, and nothing else. `moduleBuild()`
+        scopes them to the module's own markup. The preflight is not here: it
+        would restyle the host page
+     4. the tree Tailwind reads class names out of, which is this module's own
+
+   docs/src/content/docs/styling-a-module.md is the page behind this. */
+@reference 'tailwindcss';
+@reference '@prusa/connect-ui/tokens.css';
+@layer utilities {
+  @tailwind utilities;
+}
+@source './';

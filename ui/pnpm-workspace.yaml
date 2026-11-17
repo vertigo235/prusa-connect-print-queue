@@ -1,0 +1,33 @@
+# This package alone. Every JavaScript package in the core's tree is its own
+# pnpm project, and a module's is too: without this file pnpm walks upwards and
+# joins whatever workspace it finds above the module.
+packages:
+  - .
+
+# Written versions stay exact.
+savePrefix: ''
+
+# Refuse to run a script when node_modules has drifted from the lockfile,
+# instead of failing later with a confusing error.
+verifyDepsBeforeRun: error
+
+# pnpm turns the global virtual store off when CI is set and on when it is
+# not, and verifyDepsBeforeRun refuses a run under the other value. Pinned,
+# an install with CI=true is one the dev server starts on.
+enableGlobalVirtualStore: false
+
+# The three packages come from the checkout this module was written from.
+# package.json names them by version, the way it will once they are on npm;
+# delete this block then, and nothing else changes. The SDK and the library
+# are linked, so an edit there shows at once. Standards is copied: linked, its
+# ESLint config would load eslint from the checkout instead of this module. A
+# `file:` copy is not refreshed by `pnpm install` alone: an edit to standards
+# needs `rm -rf node_modules && pnpm install` here to reach this module.
+overrides:
+  '@prusa/connect': 'link:../../../apps/prusa-connect/packages/typescript'
+  '@prusa/connect-ui': 'link:../../../apps/prusa-connect/packages/svelte'
+  '@prusa/frontend-standards': 'file:../../../apps/prusa-connect/packages/standards'
+
+# Nothing publishes the packages to the public registry yet. Left on, pnpm
+# would try to fetch @prusa/connect from there and the install would fail.
+autoInstallPeers: false

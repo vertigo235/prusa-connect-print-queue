@@ -1,0 +1,24 @@
+{
+  "extends": "@prusa/frontend-standards/tsconfig.json",
+  "compilerOptions": {
+    "types": ["svelte", "vite/client", "node"],
+    // The two linked packages are read from their sources, so the module
+    // type-checks against the checkout rather than against a `dist/` somebody
+    // has to build first.
+    "paths": {
+      "@prusa/connect": [
+        "./node_modules/@prusa/connect/src/index.ts"
+      ],
+      "@prusa/connect-ui": [
+        "./node_modules/@prusa/connect-ui/src/index.ts"
+      ],
+      "@prusa/connect-ui/build": [
+        "./node_modules/@prusa/connect-ui/build/module.ts"
+      ],
+      "@prusa/connect-ui/*": [
+        "./node_modules/@prusa/connect-ui/src/*/index.ts"
+      ]
+    }
+  },
+  "include": ["src", "*.config.ts", "*.config.js", ".prettierrc.js"]
+}

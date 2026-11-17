@@ -2,30 +2,162 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Prusa Connect Print Queue",
-    "version": "0.1.0",
-    "description": "The service API for the Prusa Connect print queue module."
+    "version": "0.2.0",
+    "description": "An ordered, durable queue of prints for each printer. Paths are relative to the module mount."
+  },
+  "components": {
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "A module refusal.",
+        "required": ["code", "message"],
+        "properties": {
+          "code": {"type": "string", "description": "Stable module error code."},
+          "message": {"type": "string", "description": "Human-readable explanation."}
+        }
+      },
+      "QueueItem": {
+        "type": "object",
+        "description": "One print in a printer queue.",
+        "required": ["id", "device_id", "storage", "source", "destination", "display_name", "submitted_by", "position", "state", "created_at", "updated_at"],
+        "properties": {
+          "id": {"type": "string"},
+          "device_id": {"type": "string"},
+          "storage": {"type": "string"},
+          "source": {"type": "string"},
+          "source_size": {"type": "integer", "format": "int64"},
+          "source_mtime": {"type": "integer", "format": "int64"},
+          "source_sha256": {"type": "string"},
+          "destination": {"type": "string"},
+          "display_name": {"type": "string"},
+          "submitted_by": {"type": "string"},
+          "position": {"type": "integer", "minimum": 0},
+          "state": {"type": "string", "enum": ["queued", "starting", "printing", "done", "failed", "cancelled"]},
+          "transfer_id": {"type": "string"},
+          "command_id": {"type": "string"},
+          "job_id": {"type": "string"},
+          "error": {"type": "string"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "finished_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "Printer": {
+        "type": "object",
+        "description": "The printer record returned by the core device API.",
+        "required": ["id", "connected"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": "string"},
+          "model": {"type": "string"},
+          "connected": {"type": "boolean"},
+          "state": {"type": "object", "additionalProperties": true}
+        },
+        "additionalProperties": true
+      },
+      "Queue": {
+        "type": "object",
+        "description": "One printer and its queue.",
+        "required": ["device", "items"],
+        "properties": {
+          "device": {"$ref": "#/components/schemas/Printer"},
+          "items": {"type": "array", "items": {"$ref": "#/components/schemas/QueueItem"}}
+        }
+      },
+      "EnqueueRequest": {
+        "type": "object",
+        "description": "A file already held in a core storage.",
+        "required": ["storage", "source"],
+        "properties": {
+          "storage": {"type": "string", "description": "Core storage name."},
+          "source": {"type": "string", "description": "Path inside the core storage."},
+          "destination": {"type": "string", "description": "Printer path; defaults to the source basename."},
+          "display_name": {"type": "string", "description": "Name shown in the queue; defaults to the source basename."}
+        }
+      },
+      "MoveRequest": {
+        "type": "object",
+        "description": "The zero-based pending queue position to move an item to.",
+        "required": ["position"],
+        "properties": {"position": {"type": "integer", "minimum": 0}}
+      }
+    }
   },
   "paths": {
     "/health": {
       "get": {
         "operationId": "health",
         "summary": "Module health",
-        "description": "Returns whether the module process is running.",
+        "description": "Returns whether the queue process and database are ready.",
         "responses": {
           "200": {
-            "description": "The module is running.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": ["status"],
-                  "properties": {
-                    "status": {"type": "string", "const": "ok"}
-                  }
-                }
-              }
-            }
+            "description": "The module is ready.",
+            "content": {"application/json": {"schema": {"type": "object", "required": ["status"], "properties": {"status": {"type": "string", "const": "ok"}}}}}
           }
+        }
+      }
+    },
+    "/queues": {
+      "get": {
+        "operationId": "listQueues",
+        "summary": "List visible printer queues",
+        "description": "Lists queues for every printer visible to the caller.",
+        "responses": {
+          "200": {
+            "description": "Visible queues.",
+            "content": {"application/json": {"schema": {"type": "object", "required": ["queues"], "properties": {"queues": {"type": "array", "items": {"$ref": "#/components/schemas/Queue"}}}}}}
+          }
+        }
+      }
+    },
+    "/queues/{device_id}": {
+      "get": {
+        "operationId": "getQueue",
+        "summary": "Read one printer queue",
+        "description": "Reads the printer and every queue item visible to the caller.",
+        "parameters": [{"name": "device_id", "in": "path", "required": true, "description": "Core printer id.", "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The printer queue.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Queue"}}}},
+          "default": {"description": "The caller cannot see this printer.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/queues/{device_id}/items": {
+      "post": {
+        "operationId": "enqueuePrint",
+        "summary": "Add a print to a queue",
+        "description": "Adds an existing core-storage file to the end of a printer queue. The caller must be allowed to operate the printer and read the file.",
+        "parameters": [{"name": "device_id", "in": "path", "required": true, "description": "Core printer id.", "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EnqueueRequest"}}}},
+        "responses": {
+          "201": {"description": "The queued item.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/QueueItem"}}}},
+          "default": {"description": "The request was refused.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/queue-items/{id}": {
+      "delete": {
+        "operationId": "cancelQueueItem",
+        "summary": "Cancel a pending print",
+        "description": "Cancels a pending item. It never stops a print that has already started.",
+        "parameters": [{"name": "id", "in": "path", "required": true, "description": "Queue item id.", "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "The cancelled item.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/QueueItem"}}}},
+          "default": {"description": "The request was refused.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
+        }
+      }
+    },
+    "/queue-items/{id}/move": {
+      "post": {
+        "operationId": "moveQueueItem",
+        "summary": "Move a pending print",
+        "description": "Moves a pending item to a zero-based position in its printer queue.",
+        "parameters": [{"name": "id", "in": "path", "required": true, "description": "Queue item id.", "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MoveRequest"}}}},
+        "responses": {
+          "200": {"description": "The moved item.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/QueueItem"}}}},
+          "default": {"description": "The request was refused.", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Error"}}}}
         }
       }
     }
