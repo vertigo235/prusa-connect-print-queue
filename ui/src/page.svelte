@@ -65,7 +65,7 @@
       ? { printer_path: printerFile }
       : { storage: storageName, source: sourcePath };
     const destinationPath = destination[deviceId]?.trim();
-    if (destinationPath) request.destination = destinationPath;
+    if (destinationPath && !printerFile) request.destination = destinationPath;
     const added = await queue.enqueue(deviceId, request);
     if (added) {
       storage[deviceId] = '';
@@ -98,6 +98,7 @@
       if (printerDevice && one.device.id !== printerDevice) continue;
       if (printerSource) {
         printerPath[one.device.id] = printerSource;
+        destination[one.device.id] = '';
       } else {
         storage[one.device.id] = file.storage;
         source[one.device.id] = file.path;
@@ -106,14 +107,14 @@
   };
 
   const read = async (): Promise<void> => {
-    await queue.read();
+    await queue.read(deviceId);
     prefill();
   };
 
   onMount(() => {
     void read();
     window.addEventListener('popstate', prefill);
-    const timer = setInterval(() => void queue.read(), 5000);
+    const timer = setInterval(() => void queue.read(deviceId), 5000);
     return () => {
       window.removeEventListener('popstate', prefill);
       clearInterval(timer);
@@ -124,7 +125,7 @@
 <section class="flex flex-col gap-4">
   <header class="flex flex-wrap items-center justify-between gap-3">
     <h1 class="text-lg font-semibold">{t('print-queue.page.title')}</h1>
-    <Button variant="secondary" size="sm" disabled={queue.busy} onclick={() => void queue.read()}>
+    <Button variant="secondary" size="sm" disabled={queue.busy} onclick={() => void queue.read(deviceId)}>
       {t('print-queue.page.refresh')}
     </Button>
   </header>
@@ -253,15 +254,17 @@
                 />
               </div>
             {/if}
-            <div class="flex flex-col gap-1">
-              <Label for={`${uid}-${one.device.id}-destination`}>{t('print-queue.page.destination')}</Label>
-              <Input
-                id={`${uid}-${one.device.id}-destination`}
-                value={destination[one.device.id] ?? ''}
-                oninput={(event: Typed) => set(destination, one.device.id, event.currentTarget.value)}
-                placeholder={t('print-queue.page.destinationPlaceholder')}
-              />
-            </div>
+            {#if !printerPath[one.device.id]}
+              <div class="flex flex-col gap-1">
+                <Label for={`${uid}-${one.device.id}-destination`}>{t('print-queue.page.destination')}</Label>
+                <Input
+                  id={`${uid}-${one.device.id}-destination`}
+                  value={destination[one.device.id] ?? ''}
+                  oninput={(event: Typed) => set(destination, one.device.id, event.currentTarget.value)}
+                  placeholder={t('print-queue.page.destinationPlaceholder')}
+                />
+              </div>
+            {/if}
             <div class="flex items-end">
               <Button
                 type="submit"

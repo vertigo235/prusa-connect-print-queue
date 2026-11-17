@@ -35,8 +35,9 @@ import (
 )
 
 const (
-	name    = "print-queue"
-	release = extension.Version("0.2.0")
+	name                = "print-queue"
+	release             = extension.Version("0.3.0")
+	maxDisplayNameBytes = 256
 )
 
 //go:embed openapi.json
@@ -62,6 +63,10 @@ type module struct {
 	close context.CancelFunc
 	wait  *sync.WaitGroup
 	db    interface{ Close() error }
+
+	dispatchMu  sync.Mutex
+	historyMu   sync.Mutex
+	historyNext map[string]time.Time
 }
 
 // Settings is intentionally empty: the first usable queue has no operator
@@ -224,7 +229,7 @@ type queueEnvelope struct {
 
 func (m *module) listQueues(w http.ResponseWriter, r *http.Request, store *queueStore) {
 	principal := routesapi.PrincipalOf(r)
-	page, err := m.fleet.List(r.Context(), deviceapi.ListParams{Principal: principal, Limit: deviceapi.MaxPageLimit})
+	devices, err := m.listDevices(r.Context(), principal)
 	if err != nil {
 		writeMappedError(w, err)
 		return
@@ -238,11 +243,28 @@ func (m *module) listQueues(w http.ResponseWriter, r *http.Request, store *queue
 	for _, item := range items {
 		byDevice[item.DeviceID] = append(byDevice[item.DeviceID], item)
 	}
-	out := make([]queueEnvelope, 0, len(page.Items))
-	for _, device := range page.Items {
+	out := make([]queueEnvelope, 0, len(devices))
+	for _, device := range devices {
 		out = append(out, queueEnvelope{Device: device, Items: nonNilItems(byDevice[device.ID])})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"queues": out})
+}
+
+func (m *module) listDevices(ctx context.Context, principal string) ([]deviceapi.Device, error) {
+	var devices []deviceapi.Device
+	for offset := 0; ; {
+		page, err := m.fleet.List(ctx, deviceapi.ListParams{
+			Principal: principal, Limit: deviceapi.MaxPageLimit, Offset: offset,
+		})
+		if err != nil {
+			return nil, err
+		}
+		devices = append(devices, page.Items...)
+		if len(page.Items) == 0 || offset+len(page.Items) >= page.Total {
+			return devices, nil
+		}
+		offset += len(page.Items)
+	}
 }
 
 func (m *module) getQueue(w http.ResponseWriter, r *http.Request, store *queueStore, deviceID string) {
@@ -313,6 +335,9 @@ func (m *module) enqueue(w http.ResponseWriter, r *http.Request, store *queueSto
 		if input.Destination == "" {
 			input.Destination = path.Base(input.Source)
 		}
+	} else if input.PrinterPath != "" && !samePrinterPath(input.PrinterPath, input.Destination) {
+		writeError(w, http.StatusBadRequest, "INVALID_DESTINATION", "printer-resident files must keep their existing path")
+		return
 	}
 	if input.DisplayName == "" {
 		input.DisplayName = path.Base(input.PrinterPath)
@@ -322,6 +347,10 @@ func (m *module) enqueue(w http.ResponseWriter, r *http.Request, store *queueSto
 	}
 	if err := validateRelativePath(input.Destination, deviceapi.MaxPathBytes); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_DESTINATION", err.Error())
+		return
+	}
+	if len(input.DisplayName) > maxDisplayNameBytes {
+		writeError(w, http.StatusBadRequest, "INVALID_DISPLAY_NAME", "display_name exceeds the 256-byte limit")
 		return
 	}
 	if err := m.authorizedOperate(r.Context(), principal, deviceID); err != nil {
@@ -431,6 +460,22 @@ func (m *module) authorizedOperate(ctx context.Context, principal, deviceID stri
 	}
 	if !decision.Allowed {
 		return fmt.Errorf("%w: the caller may not operate this printer", errNotAuthorized)
+	}
+	return nil
+}
+
+func (m *module) authorizedReadStorage(ctx context.Context, principal string) error {
+	if principal == "" {
+		return errors.New("no authenticated principal")
+	}
+	decision, err := m.access.Check(ctx, accessapi.CheckParams{
+		Subject: principal, Action: "read_storage", ObjectType: "resource_kind", ObjectID: "storage",
+	})
+	if err != nil {
+		return err
+	}
+	if !decision.Allowed {
+		return fmt.Errorf("%w: the submitter may no longer read storage", errNotAuthorized)
 	}
 	return nil
 }
@@ -576,7 +621,7 @@ func (m *module) handleEvent(ctx context.Context, store *queueStore, raw json.Ra
 		if err = json.Unmarshal(envelope.Data, &payload); err != nil {
 			return err
 		}
-		item, findErr := store.findByTransferStart(ctx, payload.Storage, payload.Source, payload.Destination)
+		item, findErr := store.findByTransferStart(ctx, deviceID, payload.Storage, payload.Source, payload.Destination)
 		if errors.Is(findErr, errQueueItemNotFound) {
 			return nil
 		}
@@ -596,7 +641,12 @@ func (m *module) handleEvent(ctx context.Context, store *queueStore, raw json.Ra
 		if findErr != nil {
 			return findErr
 		}
-		if payload.State != event.TransferDone {
+		switch payload.State {
+		case event.TransferDone:
+			return nil
+		case event.TransferCancelled:
+			return store.setState(ctx, item.ID, stateCancelled, payload.Reason)
+		default:
 			return store.setState(ctx, item.ID, stateFailed, payload.Reason)
 		}
 	case event.TypeDeviceCommandSettled:
@@ -649,14 +699,7 @@ func (m *module) handleEvent(ctx context.Context, store *queueStore, raw json.Ra
 		if findErr != nil {
 			return findErr
 		}
-		switch payload.Outcome {
-		case event.JobFinished:
-			return store.setState(ctx, item.ID, stateDone, "")
-		case event.JobCancelled:
-			return store.setState(ctx, item.ID, stateCancelled, "print cancelled")
-		default:
-			return store.setState(ctx, item.ID, stateFailed, "print ended with outcome "+payload.Outcome)
-		}
+		return m.setJobOutcome(ctx, store, item.ID, payload.Outcome)
 	}
 	return nil
 }
@@ -721,11 +764,14 @@ func (m *module) dispatchLoop(ctx context.Context, store *queueStore) {
 }
 
 func (m *module) dispatchOnce(ctx context.Context, store *queueStore) {
-	page, err := m.fleet.List(ctx, deviceapi.ListParams{Limit: deviceapi.MaxPageLimit})
+	m.dispatchMu.Lock()
+	defer m.dispatchMu.Unlock()
+
+	devices, err := m.listDevices(ctx, "")
 	if err != nil {
 		return
 	}
-	for _, device := range page.Items {
+	for _, device := range devices {
 		if !device.Connected || stateValue(device) != "READY" {
 			continue
 		}
@@ -746,6 +792,10 @@ func (m *module) dispatchOnce(ctx context.Context, store *queueStore) {
 		}
 		printParams := deviceapi.PrintParams{ID: device.ID, Path: item.Destination}
 		if item.Storage != "" {
+			if err := m.authorizedReadStorage(ctx, item.SubmittedBy); err != nil {
+				_ = store.setState(ctx, item.ID, stateFailed, "submitter no longer has storage read permission")
+				continue
+			}
 			file, statErr := m.files.Stat(ctx, storageapi.StatParams{Storage: item.Storage, Path: item.Source})
 			if statErr != nil {
 				_ = store.setState(ctx, item.ID, stateFailed, "source file is no longer available: "+statErr.Error())
@@ -809,32 +859,99 @@ func (m *module) reconcile(ctx context.Context, store *queueStore) {
 		if err != nil {
 			continue
 		}
-		if jobs.Current != nil && samePrint(jobs.Current.Path, item.Destination) &&
-			(item.StartedAt == nil || !jobs.Current.Started.Before(*item.StartedAt)) {
+		if jobs.Current != nil && jobMatches(item, *jobs.Current) {
 			_ = store.setPrinting(ctx, item.ID, jobs.Current.ID)
 			continue
 		}
-		lastMatches := jobs.Last != nil && item.JobID != "" && jobs.Last.ID == item.JobID
-		if !lastMatches && jobs.Last != nil && item.JobID == "" && samePrint(jobs.Last.Path, item.Destination) &&
-			(item.StartedAt == nil || !jobs.Last.Started.Before(*item.StartedAt)) {
-			lastMatches = true
-		}
-		if lastMatches {
-			if jobs.Last.Outcome == "finished" {
-				_ = store.setState(ctx, item.ID, stateDone, "")
-			} else {
-				_ = store.setState(ctx, item.ID, stateFailed, "print ended with outcome "+jobs.Last.Outcome)
-			}
+		if jobs.Last != nil && jobMatches(item, *jobs.Last) {
+			_ = m.setJobOutcome(ctx, store, item.ID, jobs.Last.Outcome)
 			continue
 		}
-		if item.State == stateStarting && item.StartedAt != nil && time.Since(*item.StartedAt) > 30*time.Second {
-			_ = store.setState(ctx, item.ID, stateFailed, "dispatch outcome unknown; no matching printer job was found")
+		if !m.historyDue(item.DeviceID) {
+			continue
+		}
+		history, historyErr := m.findHistoryJob(ctx, item)
+		if historyErr != nil || history == nil {
+			continue
+		}
+		if history.Ended != nil {
+			_ = m.setJobOutcome(ctx, store, item.ID, history.Outcome)
+		} else {
+			_ = store.setPrinting(ctx, item.ID, history.ID)
 		}
 	}
 }
 
-func samePrint(a, b string) bool {
-	return a == b || (a != "" && b != "" && path.Base(a) == path.Base(b))
+func (m *module) historyDue(deviceID string) bool {
+	now := time.Now()
+	m.historyMu.Lock()
+	defer m.historyMu.Unlock()
+	if next, ok := m.historyNext[deviceID]; ok && now.Before(next) {
+		return false
+	}
+	if m.historyNext == nil {
+		m.historyNext = make(map[string]time.Time)
+	}
+	m.historyNext[deviceID] = now.Add(5 * time.Second)
+	return true
+}
+
+func (m *module) findHistoryJob(ctx context.Context, item queueItem) (*deviceapi.Job, error) {
+	cursor := ""
+	for {
+		page, err := m.fleet.JobHistory(ctx, deviceapi.JobHistoryParams{
+			ID: item.DeviceID, Limit: deviceapi.MaxPageLimit, Cursor: cursor,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for index := range page.Items {
+			job := page.Items[index]
+			if jobMatches(item, job) {
+				return &job, nil
+			}
+			if item.StartedAt != nil && job.Started.Before(*item.StartedAt) {
+				return nil, nil
+			}
+		}
+		if page.Cursor == "" {
+			return nil, nil
+		}
+		cursor = page.Cursor
+	}
+}
+
+func (m *module) setJobOutcome(ctx context.Context, store *queueStore, id, outcome string) error {
+	switch outcome {
+	case event.JobFinished:
+		return store.setState(ctx, id, stateDone, "")
+	case event.JobCancelled:
+		return store.setState(ctx, id, stateCancelled, "print cancelled")
+	default:
+		return store.setState(ctx, id, stateFailed, "print ended with outcome "+outcome)
+	}
+}
+
+func jobMatches(item queueItem, job deviceapi.Job) bool {
+	if item.JobID != "" {
+		return item.JobID == job.ID
+	}
+	return samePrinterPath(job.Path, item.Destination) &&
+		(item.StartedAt == nil || !job.Started.Before(*item.StartedAt))
+}
+
+func samePrinterPath(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return normalizePrinterPath(a) == normalizePrinterPath(b)
+}
+
+func normalizePrinterPath(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.TrimPrefix(path.Clean(value), "/")
 }
 
 type stdio struct{}

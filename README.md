@@ -1,8 +1,8 @@
 # Prusa Connect Print Queue
 
 An independent Prusa Connect Local module that adds one durable, ordered queue
-per printer. It queues existing G-code files from Prusa Connect storage; it
-does not upload files or cancel an active print.
+per printer. It queues existing G-code files from Prusa Connect storage or from
+a printer's own storage; it does not upload files or cancel an active print.
 
 ## Behavior
 
@@ -27,7 +27,7 @@ SDK replacement. Build a release and install it into the Docker deployment:
 make release
 docker cp dist/. prusa_connect:/tmp/print-queue-release/
 docker compose -f /apps/prusa-connect-local/docker-compose.yml exec -T prusa-connect \
-  /prusa_connect module add github.com/vertigo235/prusa-connect-print-queue@0.2.0 \
+  /prusa_connect module add github.com/vertigo235/prusa-connect-print-queue@0.3.0 \
   -from /tmp/print-queue-release -approve
 docker compose -f /apps/prusa-connect-local/docker-compose.yml restart prusa-connect
 ```
@@ -43,11 +43,13 @@ curl -b cookies.txt -X POST http://localhost:8090/api/v1/grants/device/<device-i
 
 After installing, refresh the web app and open **Printers → a printer →
 Queue**. The queue is a tab on that printer's page; it is no longer intended
-as a fleet-wide Extensions screen. From a storage file, the **Add to queue** button/menu opens the queue form
-with that file prefilled.
+as a fleet-wide Extensions screen. In that printer's **Files** tab, supported
+G-code files have an **Add to queue** action that opens the queue form with the
+printer path prefilled. Terminal results remain visible under **Recent results**.
 
 The module requests `observe`, `operate`, and `read_storage`, and checks the
-submitting principal's `operate` permission before enqueue, move, or delete.
+submitting principal's `operate` permission before enqueue, move, or delete. It
+also rechecks storage-read permission before dispatching a storage-backed item.
 Its worker uses the granted module permissions to inspect storage and start
 prints.
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 - 2026-11-17
+
+- Queue files already held on printer storage from printer Files tabs.
+- Bound queue history and display names, paginate fleet reads, and recover job history after missed events.
+- Harden dispatch serialization, transfer matching, permission rechecks, and cancellation recovery.
+- Add HTTP, dispatch, reconciliation, printer-file, and concurrent queue tests.
+
 ## 0.2.0 - 2026-11-17
 
 - Add a durable per-printer queue backed by the module database.

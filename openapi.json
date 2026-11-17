@@ -73,7 +73,7 @@
           "source": {"type": "string", "description": "Path inside core storage; use with storage."},
           "printer_path": {"type": "string", "description": "Storage-prefixed printer path; use instead of storage and source."},
           "destination": {"type": "string", "description": "Printer path; defaults to the source basename or printer_path."},
-          "display_name": {"type": "string", "description": "Name shown in the queue; defaults to the source basename or printer_path basename."}
+          "display_name": {"type": "string", "maxLength": 256, "description": "Name shown in the queue; defaults to the source basename or printer_path basename."}
         }
       },
       "MoveRequest": {

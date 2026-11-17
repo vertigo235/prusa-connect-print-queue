@@ -3,7 +3,7 @@ title: Print Queue
 summary: Adds an ordered, durable print queue to each Prusa Connect printer.
 codeowner: vertigo235
 kind: sink
-version: 0.2.0
+version: 0.3.0
 license: MIT
 contract_major: 1
 require:

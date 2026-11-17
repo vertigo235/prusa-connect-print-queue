@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -172,7 +172,51 @@ func (s *queueStore) list(ctx context.Context, deviceID string) ([]queueItem, er
 		return nil, fmt.Errorf("list queue rows: %w", err)
 	}
 
-	return items, nil
+	return visibleQueueItems(items), nil
+}
+
+const queueHistoryLimit = 50
+
+// visibleQueueItems keeps every actionable item and only a bounded, newest
+// slice of terminal results per printer. Queue history must not make the
+// module response grow without limit.
+func visibleQueueItems(items []queueItem) []queueItem {
+	groups := make(map[string][]queueItem)
+	order := make([]string, 0)
+	for _, item := range items {
+		if _, seen := groups[item.DeviceID]; !seen {
+			order = append(order, item.DeviceID)
+		}
+		groups[item.DeviceID] = append(groups[item.DeviceID], item)
+	}
+
+	out := make([]queueItem, 0, len(items))
+	for _, deviceID := range order {
+		var active, terminal []queueItem
+		for _, item := range groups[deviceID] {
+			if item.State == stateQueued || item.State == stateStarting || item.State == statePrinting {
+				active = append(active, item)
+			} else {
+				terminal = append(terminal, item)
+			}
+		}
+		sort.SliceStable(terminal, func(i, j int) bool {
+			return terminalTime(terminal[i]).After(terminalTime(terminal[j]))
+		})
+		if len(terminal) > queueHistoryLimit {
+			terminal = terminal[:queueHistoryLimit]
+		}
+		out = append(out, active...)
+		out = append(out, terminal...)
+	}
+	return out
+}
+
+func terminalTime(item queueItem) time.Time {
+	if item.FinishedAt != nil {
+		return *item.FinishedAt
+	}
+	return item.UpdatedAt
 }
 
 func (s *queueStore) get(ctx context.Context, id string) (queueItem, error) {
@@ -207,6 +251,11 @@ func (s *queueStore) claimNext(ctx context.Context, deviceID string) (queueItem,
 		       command_id, job_id, error, created_at, started_at, finished_at, updated_at
 		FROM queue_items
 		WHERE device_id = ? AND state = 'queued'
+		  AND NOT EXISTS (
+			SELECT 1 FROM queue_items active
+			WHERE active.device_id = queue_items.device_id
+			  AND active.state IN ('starting', 'printing')
+		  )
 		ORDER BY position, created_at, id
 		LIMIT 1`), deviceID)
 	item, err := scanQueueItem(row)
@@ -245,7 +294,9 @@ func (s *queueStore) claimNext(ctx context.Context, deviceID string) (queueItem,
 func (s *queueStore) setDispatch(ctx context.Context, id, transferID, commandID string) error {
 	_, err := s.db.ExecContext(ctx, s.query(`
 		UPDATE queue_items
-		SET transfer_id = ?, command_id = ?, updated_at = ?
+		SET transfer_id = CASE WHEN transfer_id = '' THEN ? ELSE transfer_id END,
+		    command_id = CASE WHEN command_id = '' THEN ? ELSE command_id END,
+		    updated_at = ?
 		WHERE id = ? AND state = 'starting'`), transferID, commandID, s.now().UTC(), id)
 	if err != nil {
 		return fmt.Errorf("save dispatch ids: %w", err)
@@ -292,25 +343,25 @@ func (s *queueStore) findByIDField(ctx context.Context, field, value string) (qu
 }
 
 func (s *queueStore) findByJobPath(ctx context.Context, deviceID, destination string) (queueItem, error) {
-	items, err := s.getMany(ctx, "WHERE device_id = ? AND state IN ('starting', 'printing') ORDER BY created_at, id", deviceID)
+	items, err := s.getMany(ctx, "WHERE device_id = ? AND command_id = '' AND state IN ('starting', 'printing') ORDER BY created_at, id", deviceID)
 	if err != nil {
 		return queueItem{}, err
 	}
 	for _, item := range items {
-		if item.Destination == destination || path.Base(item.Destination) == path.Base(destination) {
+		if samePrinterPath(item.Destination, destination) {
 			return item, nil
 		}
 	}
 	return queueItem{}, errQueueItemNotFound
 }
 
-func (s *queueStore) findByTransferStart(ctx context.Context, storage, source, destination string) (queueItem, error) {
-	items, err := s.getMany(ctx, "WHERE storage = ? AND source = ? AND state = 'starting' ORDER BY created_at, id", storage, source)
+func (s *queueStore) findByTransferStart(ctx context.Context, deviceID, storage, source, destination string) (queueItem, error) {
+	items, err := s.getMany(ctx, "WHERE device_id = ? AND storage = ? AND source = ? AND state = 'starting' AND transfer_id = '' ORDER BY created_at, id", deviceID, storage, source)
 	if err != nil {
 		return queueItem{}, err
 	}
 	for _, item := range items {
-		if item.Destination == destination || path.Base(item.Destination) == path.Base(destination) {
+		if samePrinterPath(item.Destination, destination) {
 			return item, nil
 		}
 	}

@@ -170,6 +170,7 @@
           },
           "display_name": {
             "type": "string",
+            "maxLength": 256,
             "description": "Name shown in the queue; defaults to the source basename or printer_path basename."
           }
         }

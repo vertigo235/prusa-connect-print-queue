@@ -31,18 +31,18 @@ export class QueueState {
     return this.#problem;
   }
 
-  read(): Promise<void> {
-    this.#flight ??= this.#read().finally(() => {
+  read(deviceId?: string): Promise<void> {
+    this.#flight ??= this.#read(deviceId ?? '').finally(() => {
       this.#flight = undefined;
     });
     return this.#flight;
   }
 
-  async #read(): Promise<void> {
+  async #read(deviceId: string): Promise<void> {
     this.#busy = true;
     this.#problem = '';
     try {
-      this.#queues = await this.#service.list();
+      this.#queues = await this.#service.list(deviceId);
       this.#loaded = true;
     } catch (thrown) {
       this.#problem = reasonOf(thrown);
@@ -54,21 +54,21 @@ export class QueueState {
   async enqueue(deviceId: string, request: EnqueueRequest): Promise<boolean> {
     return this.#mutate(async () => {
       await this.#service.enqueue(deviceId, request);
-      await this.read();
+      await this.read(deviceId);
     });
   }
 
   async cancel(item: QueueItem): Promise<boolean> {
     return this.#mutate(async () => {
       await this.#service.cancel(item.id);
-      await this.read();
+      await this.read(item.device_id);
     });
   }
 
   async move(item: QueueItem, position: number): Promise<boolean> {
     return this.#mutate(async () => {
       await this.#service.move(item.id, position);
-      await this.read();
+      await this.read(item.device_id);
     });
   }
 
