@@ -10,6 +10,7 @@
       "get": {
         "operationId": "health",
         "summary": "Module health",
+        "description": "Returns whether the module process is running.",
         "responses": {
           "200": {
             "description": "The module is running.",
