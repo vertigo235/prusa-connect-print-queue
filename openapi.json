@@ -1,0 +1,32 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Prusa Connect Print Queue",
+    "version": "0.1.0",
+    "description": "The service API for the Prusa Connect print queue module."
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "health",
+        "summary": "Module health",
+        "responses": {
+          "200": {
+            "description": "The module is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": {
+                    "status": {"type": "string", "const": "ok"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

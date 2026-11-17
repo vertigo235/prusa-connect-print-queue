@@ -1,0 +1,11 @@
+bin/
+dist/
+node_modules/
+coverage/
+*.log
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example

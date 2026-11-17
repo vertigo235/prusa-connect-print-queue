@@ -1,0 +1,15 @@
+name: print-queue
+title: Print queue
+summary: Adds a durable, per-printer print queue to Prusa Connect Local.
+codeowner: vertigo235
+kind: sink
+version: 0.1.0
+license: MIT
+contract_major: 1
+openapi: openapi.json
+platforms:
+  - linux_amd64
+  - linux_arm64
+  - darwin_amd64
+  - darwin_arm64
+  - windows_amd64
